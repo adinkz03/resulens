@@ -2,6 +2,7 @@ const PREVIEW_KEY = "resulens_resume_previews";
 
 export interface ResumePreviewItem {
   candidate_id: string;
+  resume_storage_url?: string;
   resume_url?: string;
   resume_filename?: string;
 }
@@ -26,13 +27,15 @@ const writeStore = (data: ResumePreviewMap) => {
 export const saveResumePreview = (
   candidateId: string,
   resumeUrl?: string,
-  resumeFilename?: string
+  resumeFilename?: string,
+  resumeStorageUrl?: string
 ) => {
   if (!candidateId) return;
 
   const store = readStore();
   store[candidateId] = {
     candidate_id: candidateId,
+    resume_storage_url: resumeStorageUrl,
     resume_url: resumeUrl,
     resume_filename: resumeFilename
   };

@@ -82,8 +82,9 @@ const CandidateDetail = () => {
 
       let mergedCandidate = {
         ...apiCandidate,
-        resume_url: preview?.resume_url || apiCandidate.resume_url,
-        resume_filename: preview?.resume_filename || apiCandidate.resume_filename
+        resume_storage_url: apiCandidate.resume_storage_url || preview?.resume_storage_url,
+        resume_url: apiCandidate.resume_url || preview?.resume_url,
+        resume_filename: apiCandidate.resume_filename || preview?.resume_filename
       };
 
       if (mergedCandidate.is_new) {
@@ -96,8 +97,9 @@ const CandidateDetail = () => {
 
           mergedCandidate = {
             ...seenResponse.data,
-            resume_url: preview?.resume_url || seenResponse.data.resume_url,
-            resume_filename: preview?.resume_filename || seenResponse.data.resume_filename
+            resume_storage_url: seenResponse.data.resume_storage_url || preview?.resume_storage_url,
+            resume_url: seenResponse.data.resume_url || preview?.resume_url,
+            resume_filename: seenResponse.data.resume_filename || preview?.resume_filename
           };
         } catch (seenError) {
           if (axios.isAxiosError(seenError) && seenError.response?.status === 401) {
@@ -174,8 +176,9 @@ const CandidateDetail = () => {
 
       const mergedUpdatedCandidate = {
         ...updatedCandidateFromApi,
-        resume_url: preview?.resume_url || candidate.resume_url,
-        resume_filename: preview?.resume_filename || updatedCandidateFromApi.resume_filename
+        resume_storage_url: updatedCandidateFromApi.resume_storage_url || preview?.resume_storage_url || candidate.resume_storage_url,
+        resume_url: updatedCandidateFromApi.resume_url || preview?.resume_url || candidate.resume_url,
+        resume_filename: updatedCandidateFromApi.resume_filename || preview?.resume_filename
       };
 
       setCandidate(mergedUpdatedCandidate);

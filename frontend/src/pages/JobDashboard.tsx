@@ -99,8 +99,9 @@ const JobDashboard = () => {
 
       return {
         ...candidate,
-        resume_url: preview?.resume_url || candidate.resume_url,
-        resume_filename: preview?.resume_filename || candidate.resume_filename
+        resume_storage_url: candidate.resume_storage_url || preview?.resume_storage_url,
+        resume_url: candidate.resume_url || preview?.resume_url,
+        resume_filename: candidate.resume_filename || preview?.resume_filename
       };
     });
 
@@ -480,13 +481,15 @@ const JobDashboard = () => {
               const localCandidate = {
                 ...event.candidate,
                 is_new: true,
-                resume_url: URL.createObjectURL(filesForBatch[event.index]),
+                resume_url: event.candidate.resume_url || URL.createObjectURL(filesForBatch[event.index]),
+                resume_storage_url: event.candidate.resume_storage_url || null,
                 resume_filename: filesForBatch[event.index]?.name || event.filename
               };
 
               const dbPayload = {
                 ...localCandidate,
-                resume_url: null
+                resume_url: event.candidate.resume_url || null,
+                resume_storage_url: event.candidate.resume_storage_url || null
               };
 
               const createdCandidateResponse = await axios.post(
@@ -497,15 +500,17 @@ const JobDashboard = () => {
 
               const persistedCandidate = {
                 ...createdCandidateResponse.data,
-                resume_url: localCandidate.resume_url,
-                resume_filename: localCandidate.resume_filename
+                resume_storage_url: createdCandidateResponse.data.resume_storage_url || localCandidate.resume_storage_url,
+                resume_url: createdCandidateResponse.data.resume_url || localCandidate.resume_url,
+                resume_filename: createdCandidateResponse.data.resume_filename || localCandidate.resume_filename
               };
 
               if (persistedCandidate.candidate_id) {
                 saveResumePreview(
                   persistedCandidate.candidate_id,
                   persistedCandidate.resume_url,
-                  persistedCandidate.resume_filename
+                  persistedCandidate.resume_filename,
+                  persistedCandidate.resume_storage_url
                 );
               }
 

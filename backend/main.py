@@ -5,12 +5,14 @@ import json
 import asyncio
 import pdfplumber
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, UploadFile, HTTPException, File, Form, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from azure.storage.blob import BlobServiceClient, ContentSettings, generate_blob_sas, BlobSasPermissions
 from sentence_transformers import SentenceTransformer, util
 from google import genai
 from google.genai import types
@@ -19,7 +21,6 @@ from sqlalchemy.orm import Session
 from database import get_db
 from auth import authenticate_user, create_access_token, get_current_user
 from models import Job as JobModel, Batch as BatchModel, Candidate as CandidateModel, User
-from datetime import timezone
 
 # Importing your existing logic from scoring.py
 from scoring import get_final_aps, get_final_aps_v2, calculate_skill_score, normalize_degree
@@ -51,6 +52,15 @@ print("Loading Semantic Model (SBERT)...")
 local_sim_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+AZURE_STORAGE_CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING", "").strip()
+AZURE_STORAGE_RESUME_CONTAINER = os.getenv("AZURE_STORAGE_RESUME_CONTAINER", "resumes").strip() or "resumes"
+AZURE_STORAGE_RESUME_URL_TTL_MINUTES = int(os.getenv("AZURE_STORAGE_RESUME_URL_TTL_MINUTES", "60"))
+
+blob_service_client = (
+    BlobServiceClient.from_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+    if AZURE_STORAGE_CONNECTION_STRING else None
+)
 
 AI_MODELS = [
     "models/gemini-2.5-flash-lite",
@@ -297,6 +307,7 @@ class CandidateInput(BaseModel):
 
     resume_filename: Optional[str] = None
     resume_url: Optional[str] = None
+    resume_storage_url: Optional[str] = None
 
     score_breakdown: Dict[str, Any] = Field(default_factory=dict)
     component_scores: Dict[str, Any] = Field(default_factory=dict)
@@ -386,6 +397,76 @@ def serialize_batch(batch: BatchModel) -> dict:
     }
 
 
+def parse_storage_connection_string(connection_string: str) -> dict:
+    parsed = {}
+
+    for segment in connection_string.split(";"):
+        if "=" not in segment:
+            continue
+        key, value = segment.split("=", 1)
+        parsed[key] = value
+
+    return parsed
+
+
+def build_signed_resume_url(blob_name: Optional[str]) -> Optional[str]:
+    if not blob_name:
+        return None
+
+    if blob_name.startswith("http://") or blob_name.startswith("https://"):
+        return blob_name
+
+    if not blob_service_client or not AZURE_STORAGE_CONNECTION_STRING:
+        return None
+
+    connection_parts = parse_storage_connection_string(AZURE_STORAGE_CONNECTION_STRING)
+    account_name = connection_parts.get("AccountName")
+    account_key = connection_parts.get("AccountKey")
+
+    if not account_name or not account_key:
+        return None
+
+    sas_token = generate_blob_sas(
+        account_name=account_name,
+        container_name=AZURE_STORAGE_RESUME_CONTAINER,
+        blob_name=blob_name,
+        account_key=account_key,
+        permission=BlobSasPermissions(read=True),
+        expiry=datetime.now(timezone.utc) + timedelta(minutes=AZURE_STORAGE_RESUME_URL_TTL_MINUTES)
+    )
+
+    return (
+        f"https://{account_name}.blob.core.windows.net/"
+        f"{AZURE_STORAGE_RESUME_CONTAINER}/{blob_name}?{sas_token}"
+    )
+
+
+def upload_resume_bytes(file_bytes: bytes, filename: str) -> Optional[str]:
+    if not blob_service_client:
+        return None
+
+    safe_filename = os.path.basename(filename or "resume.pdf")
+    blob_name = f"{uuid.uuid4()}-{safe_filename}"
+    container_client = blob_service_client.get_container_client(AZURE_STORAGE_RESUME_CONTAINER)
+
+    try:
+        container_client.create_container()
+    except Exception:
+        pass
+
+    blob_client = container_client.get_blob_client(blob_name)
+    blob_client.upload_blob(
+        file_bytes,
+        overwrite=True,
+        content_settings=ContentSettings(
+            content_type="application/pdf",
+            content_disposition=f'inline; filename="{safe_filename}"'
+        )
+    )
+
+    return blob_name
+
+
 def serialize_candidate(candidate: CandidateModel) -> dict:
     return {
         "candidate_id": str(candidate.id),
@@ -420,7 +501,8 @@ def serialize_candidate(candidate: CandidateModel) -> dict:
         "education_explanation": candidate.education_explanation or "",
 
         "resume_filename": candidate.resume_filename,
-        "resume_url": candidate.resume_storage_url,
+        "resume_storage_url": candidate.resume_storage_url,
+        "resume_url": build_signed_resume_url(candidate.resume_storage_url),
 
         "score_breakdown": candidate.score_breakdown or {},
         "component_scores": candidate.component_scores or {},
@@ -1485,7 +1567,7 @@ def create_candidate(
         education_explanation=payload.education_explanation,
 
         resume_filename=payload.resume_filename,
-        resume_storage_url=payload.resume_url,
+        resume_storage_url=payload.resume_storage_url or payload.resume_url,
 
         interview_questions=payload.interview_questions,
         score_breakdown=payload.score_breakdown,
@@ -1652,6 +1734,7 @@ async def analyze_batch_stream(
             for item in uploaded_files:
                 index = item["index"]
                 filename = item["filename"]
+                resume_storage_ref = upload_resume_bytes(item["bytes"], filename)
 
                 yield json.dumps({
                     "type": "file_started",
@@ -1689,6 +1772,9 @@ async def analyze_batch_stream(
                         strong_threshold,
                         minimum_interview_threshold
                     )
+                    ui_mapped["resume_storage_url"] = resume_storage_ref
+                    ui_mapped["resume_url"] = build_signed_resume_url(resume_storage_ref)
+                    ui_mapped["resume_filename"] = filename
 
                     yield json.dumps({
                         "type": "file_completed",

@@ -1,12 +1,22 @@
+import os
+
+from dotenv import load_dotenv
+
 from database import SessionLocal
 from models import User
 from auth import get_password_hash
+
+load_dotenv()
+
+DEFAULT_ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
+DEFAULT_ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin@123")
 
 def seed_admin():
     db = SessionLocal()
 
     try:
-        existing_user = db.query(User).filter(User.username == "admin").first()
+        existing_user = db.query(User).filter(User.username == DEFAULT_ADMIN_USERNAME).first()
         print("Existing user found:", existing_user)
 
         if existing_user:
@@ -14,9 +24,9 @@ def seed_admin():
             return
 
         admin_user = User(
-            username="admin",
-            email="admin@example.com",
-            hashed_password=get_password_hash("Admin@123"),
+            username=DEFAULT_ADMIN_USERNAME,
+            email=DEFAULT_ADMIN_EMAIL,
+            hashed_password=get_password_hash(DEFAULT_ADMIN_PASSWORD),
             role="admin",
             is_active=True
         )
